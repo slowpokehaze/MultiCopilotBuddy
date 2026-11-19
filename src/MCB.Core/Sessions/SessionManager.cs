@@ -102,7 +102,6 @@ public sealed class SessionManager
                 // (BotName задан, AutoAttach не выключен), но его процесс мёртв.
                 // Повтор попытки не чаще раза в 30 с — чтобы не плодить процессы.
                 if (session.AutoAttach
-                    && !string.IsNullOrWhiteSpace(session.BotName)
                     && session.State is SessionState.Running or SessionState.InGame or SessionState.Botting
                     && !WowLauncher.IsProcessAlive(session.BotProcessId, "CopilotBuddy")
                     && (DateTime.UtcNow - session.BotLastAttachUtc).TotalSeconds >= BotAttachRetrySec)

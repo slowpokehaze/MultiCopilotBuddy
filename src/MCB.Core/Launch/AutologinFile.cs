@@ -63,4 +63,28 @@ public static class AutologinFile
             File.Delete(path);
         }
     }
+
+    /// <summary>
+    /// Ждать, пока DLL клиента прочитает autologin.json и удалит его.
+    /// DLL читает файл лениво (на логин-скрине) — без ожидания следующий
+    /// запуск перезапишет файл до прочтения (гонка при мульти-запуске).
+    /// Возвращает true, если файл исчез (креды забраны).
+    /// </summary>
+    public static bool WaitConsumed(string wowDirectory, TimeSpan timeout)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        while (DateTime.UtcNow < deadline)
+        {
+            if (!Exists(wowDirectory))
+            {
+                // небольшая пауза, чтобы DLL гарантированно дочитала файл
+                System.Threading.Thread.Sleep(1500);
+                return true;
+            }
+
+            System.Threading.Thread.Sleep(500);
+        }
+
+        return !Exists(wowDirectory);
+    }
 }

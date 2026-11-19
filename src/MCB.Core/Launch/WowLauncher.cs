@@ -247,7 +247,12 @@ public sealed class WowLauncher
                 }
             }
 
-            // 8. Учёт: cooldown и сессия.
+            // 8. Ждём, пока DLL клиента заберёт autologin.json (удаляет после
+            // чтения). Иначе следующий запуск перезапишет файл и этот клиент
+            // войдёт без кредов или с чужими (гонка при мульти-запуске).
+            AutologinFile.WaitConsumed(wowDir, TimeSpan.FromSeconds(60));
+
+            // 9. Учёт: cooldown и сессия.
             account.LastLaunchUtc = DateTime.UtcNow;
 
             var session = alive ?? ReuseDeadSession(account.Login) ?? CreateSession(account.Login);
