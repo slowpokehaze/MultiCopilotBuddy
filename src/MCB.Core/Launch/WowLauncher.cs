@@ -317,7 +317,10 @@ public sealed class WowLauncher
                     Password = password,
                     Realmlist = account.Realmlist,
                     RealmName = account.Realm,
-                    Character = slowEnter ? string.Empty : (character?.Name ?? string.Empty),
+                    // Имя персонажа обязательно: DLL выбирает слот по нему
+                    // (gluexml_charenum с пустой целью молчит вечно). Медленный
+                    // вход обеспечивает сама DLL (kListSettleMs/kSelectSettleMs).
+                    Character = character?.Name ?? string.Empty,
                     TotpSecret = account.GetTotpSecret(),
                 });
 
