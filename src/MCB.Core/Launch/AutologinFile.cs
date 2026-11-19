@@ -55,7 +55,13 @@ public static class AutologinFile
             data["totp_secret"] = request.TotpSecret;
         }
 
-        var json = JsonSerializer.Serialize(data);
+        // UnsafeRelaxedJsonEscaping обязателен: JsonSerializer по умолчанию
+        // экранирует кириллицу как \uXXXX, а простой JSON-парсер DLL не
+        // декодирует \u-escape — он ищет имя персонажа побайтово (бой
+        // 2026-11-20: «Крылатылом» превращался в 'u041Au0440...' и никогда
+        // не совпадал с именем в игре).
+        var json = JsonSerializer.Serialize(data,
+            new JsonSerializerOptions { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
         File.WriteAllBytes(PathFor(wowDirectory), System.Text.Encoding.UTF8.GetBytes(json));
     }
 
