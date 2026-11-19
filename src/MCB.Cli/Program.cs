@@ -506,6 +506,11 @@ public static class Program
         var exe = BotAttacher.ResolveCopilotBuddyExe(store);
         Console.WriteLine($"Бот: {exe ?? "НЕ НАЙДЕН"}");
         Console.WriteLine($"Аргументы: {BotAttacher.BuildArguments(session.WowProcessId, session)}");
+        if (!WowLauncher.GetInWorldPids().Contains(session.WowProcessId))
+        {
+            Console.WriteLine("ВНИМАНИЕ: клиент ещё не в мире (логин/выбор персонажа) — бот может не стартовать. Лучше подождать входа в мир.");
+        }
+
         var port = BotAttacher.AssignBridgePort(store, session);
         Console.WriteLine($"Порт моста: {port}");
         var pid = BotAttacher.Attach(store, session);

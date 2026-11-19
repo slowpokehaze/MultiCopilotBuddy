@@ -80,6 +80,68 @@ public sealed class WowLauncher
         }
     }
 
+    /// <summary>
+    /// Набор PID живых WoW-клиентов, которые уже в мире (не на логин-скрине
+    /// и не на выборе персонажа). Признак: на логине/выборе персонажа у клиента
+    /// единственный ESTABLISHED-коннект к auth-серверу (порт 3724); в мире —
+    /// коннект к world-серверу с другим портом. Один вызов netstat на всех.
+    /// </summary>
+    public static HashSet<int> GetInWorldPids()
+    {
+        var result = new HashSet<int>();
+        var psi = new ProcessStartInfo("netstat.exe", "-ano -p tcp")
+        {
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardOutput = true,
+        };
+
+        try
+        {
+            using var netstat = Process.Start(psi);
+            if (netstat is null)
+            {
+                return result;
+            }
+
+            var output = netstat.StandardOutput.ReadToEnd();
+            netstat.WaitForExit(5000);
+
+            foreach (var line in output.Split('\n'))
+            {
+                var parts = line.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+                if (parts.Length < 5
+                    || !string.Equals(parts[0], "TCP", StringComparison.OrdinalIgnoreCase)
+                    || !string.Equals(parts[3], "ESTABLISHED", StringComparison.OrdinalIgnoreCase)
+                    || !int.TryParse(parts[^1], out var pid))
+                {
+                    continue;
+                }
+
+                var foreign = parts[2];
+                var portPos = foreign.LastIndexOf(':');
+                if (portPos < 0 || !int.TryParse(foreign[(portPos + 1)..], out var remotePort))
+                {
+                    continue;
+                }
+
+                if (remotePort != AuthServerPort)
+                {
+                    result.Add(pid);
+                }
+            }
+        }
+        catch
+        {
+            // netstat недоступен — считаем, что данных нет (пустой набор).
+        }
+
+        return result;
+    }
+
+    /// <summary>Порт auth-сервера (логин/выбор персонажа) для определения «в мире».</summary>
+    public const int AuthServerPort = 3724;
+
     /// <summary>Разбирает WowPath аккаунта: путь к exe ИЛИ к папке клиента.</summary>
     public static (string ExePath, string Directory) ResolveWowPath(string wowPath)
     {

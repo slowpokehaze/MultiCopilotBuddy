@@ -98,11 +98,28 @@ public sealed class SessionManager
                     session.RestartCount = 0;
                 }
 
-                // Аттач/перезапуск бота: клиент жив, бот должен быть запущен
-                // (BotName задан, AutoAttach не выключен), но его процесс мёртв.
+                // Детект «в мире» (один netstat на пульс, только когда нужен):
+                // Running → InGame по факту входа в мир.
+                HashSet<int>? inWorld = null;
+                if (session.State == SessionState.Running
+                    || (session.AutoAttach
+                        && session.State is SessionState.Running or SessionState.InGame or SessionState.Botting
+                        && !WowLauncher.IsProcessAlive(session.BotProcessId, "CopilotBuddy")))
+                {
+                    inWorld = WowLauncher.GetInWorldPids();
+                    if (session.State == SessionState.Running && inWorld.Contains(session.WowProcessId))
+                    {
+                        session.State = SessionState.InGame;
+                    }
+                }
+
+                // Аттач/перезапуск бота: только когда клиент уже В МИРЕ (после
+                // логина и входа — иначе бот стартует на логин-скрине и падает).
                 // Повтор попытки не чаще раза в 30 с — чтобы не плодить процессы.
                 if (session.AutoAttach
-                    && session.State is SessionState.Running or SessionState.InGame or SessionState.Botting
+                    && session.State is SessionState.InGame or SessionState.Botting
+                    && inWorld is not null
+                    && inWorld.Contains(session.WowProcessId)
                     && !WowLauncher.IsProcessAlive(session.BotProcessId, "CopilotBuddy")
                     && (DateTime.UtcNow - session.BotLastAttachUtc).TotalSeconds >= BotAttachRetrySec)
                 {
@@ -112,7 +129,9 @@ public sealed class SessionManager
                     if (botPid > 0)
                     {
                         session.BotProcessId = botPid;
-                        session.State = SessionState.Botting;
+                        session.State = string.IsNullOrWhiteSpace(session.BotName)
+                            ? SessionState.InGame
+                            : SessionState.Botting;
                         session.LastUpdatedUtc = DateTime.UtcNow;
                     }
                 }
