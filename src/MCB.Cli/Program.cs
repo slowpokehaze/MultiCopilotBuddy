@@ -70,6 +70,8 @@ public static class Program
                 "stop-all" => StopAllCmd(configPath),
                 "set-schedule" => SetScheduleCmd(configPath, rest),
                 "clear-schedule" => ClearScheduleCmd(configPath, rest),
+                "set-default-char" => SetDefaultCharCmd(configPath, rest),
+                "clear-default-char" => ClearDefaultCharCmd(configPath, rest),
                 "next-char" => NextCharCmd(configPath, rest),
                 "import-wowmanager" => ImportWowManagerCmd(configPath, rest),
                 _ => Unknown(command),
@@ -140,6 +142,8 @@ public static class Program
               stop-all                       # остановить все живые сессии
               set-schedule <acc> <HH:mm-HH:mm> [days]   # окно ботинга (напр. 18:00-23:30 Mo,Tu,We)
               clear-schedule <acc>           # убрать расписание (ботить всегда)
+              set-default-char <acc> <char>  # launch без имени входит в мир этим персонажем
+              clear-default-char <acc>       # launch снова останавливается на выборе персонажа
               next-char <acc>                # очередь: следующий персонаж через мост
               import-wowmanager <characters.json> [--wow <путь>]  # миграция из WowManager
             """);
@@ -793,6 +797,38 @@ public static class Program
         account.Schedule = new ScheduleOptions();
         store.Save();
         Console.WriteLine($"Расписание '{account.Login}' убрано (ботить всегда).");
+        return 0;
+    }
+
+    private static int SetDefaultCharCmd(string configPath, string[] args)
+    {
+        if (args.Length < 2)
+        {
+            Console.Error.WriteLine("Использование: set-default-char <account> <персонаж>  — launch без имени входит в мир этим персонажем");
+            return 2;
+        }
+
+        var store = new MultiAccountStore(configPath);
+        var account = store.FindAccount(args[0]) ?? throw new InvalidOperationException($"Аккаунт '{args[0]}' не найден.");
+        account.DefaultCharacter = args[1].Trim();
+        store.Save();
+        Console.WriteLine($"Персонаж по умолчанию '{account.Login}': {account.DefaultCharacter} (launch будет входить в мир автоматически).");
+        return 0;
+    }
+
+    private static int ClearDefaultCharCmd(string configPath, string[] args)
+    {
+        if (args.Length < 1)
+        {
+            Console.Error.WriteLine("Использование: clear-default-char <account>  — launch снова останавливается на выборе персонажа");
+            return 2;
+        }
+
+        var store = new MultiAccountStore(configPath);
+        var account = store.FindAccount(args[0]) ?? throw new InvalidOperationException($"Аккаунт '{args[0]}' не найден.");
+        account.DefaultCharacter = string.Empty;
+        store.Save();
+        Console.WriteLine($"Персонаж по умолчанию '{account.Login}' убран (стоп на выборе персонажа).");
         return 0;
     }
 

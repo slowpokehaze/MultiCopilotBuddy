@@ -220,15 +220,34 @@ public sealed class WowLauncher
                     $"Wow.exe не найден по WowPath аккаунта '{account.Login}': '{account.WowPath}'.");
             }
 
-            // 4. Персонаж (для autologin character).
-            var character = string.IsNullOrWhiteSpace(characterName)
+            // 4. Персонаж (для autologin character). Пустое имя → берём
+            // персонажа по умолчанию (DefaultCharacter, иначе первый видимый
+            // из рорстера) — клиент сам входит в мир. Дефолтное имя может
+            // отсутствовать в рорстере (взято из WTF) — это не ошибка,
+            // DLL выбирает слот по имени из списка сервера. Явно заданное
+            // имя проверяется строго.
+            var charName = characterName;
+            if (string.IsNullOrWhiteSpace(charName))
+            {
+                charName = account.DefaultCharacter;
+                if (string.IsNullOrWhiteSpace(charName))
+                {
+                    charName = account.Characters.FirstOrDefault(c => !c.Hidden)?.Name;
+                }
+            }
+
+            var known = string.IsNullOrWhiteSpace(charName)
                 ? null
-                : _store.FindCharacter(account, characterName);
-            if (!string.IsNullOrWhiteSpace(characterName) && character is null)
+                : _store.FindCharacter(account, charName);
+            if (!string.IsNullOrWhiteSpace(characterName) && known is null)
             {
                 return LaunchResult.Fail(LaunchFailure.MissingCharacter,
                     $"Персонаж '{characterName}' не найден у аккаунта '{account.Login}' (или скрыт).");
             }
+
+            var character = known ?? (string.IsNullOrWhiteSpace(charName)
+                ? null
+                : new CharacterModel { Name = charName.Trim(), Realm = account.Realm });
 
             // 5. Пароль.
             if (!account.HasPassword)

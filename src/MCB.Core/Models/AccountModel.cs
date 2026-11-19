@@ -26,6 +26,13 @@ public sealed class AccountModel
     /// <summary>TOTP-секрет 2FA, DPAPI-блоб (base64). Пусто = 2FA не используется.</summary>
     public string EncryptedTotp { get; set; } = string.Empty;
 
+/// <summary>
+/// Персонаж по умолчанию: launch без явного имени входит в мир этим
+/// персонажем (DLL выбирает слот по имени из autologin.json). Пусто —
+/// только логин, стоп на выборе персонажа.
+/// </summary>
+public string DefaultCharacter { get; set; } = string.Empty;
+
     /// <summary>Момент последнего запуска клиента (UTC) — для cooldown запусков.</summary>
     public DateTime LastLaunchUtc { get; set; } = DateTime.MinValue;
 
