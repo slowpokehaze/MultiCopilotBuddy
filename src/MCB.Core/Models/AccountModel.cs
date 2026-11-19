@@ -36,6 +36,13 @@ public string DefaultCharacter { get; set; } = string.Empty;
     /// <summary>Момент последнего запуска клиента (UTC) — для cooldown запусков.</summary>
     public DateTime LastLaunchUtc { get; set; } = DateTime.MinValue;
 
+    /// <summary>
+    /// Когда клиента этого аккаунта убили процессом (без корректного логаута).
+    /// Сервер ещё несколько минут держит «призрачную» сессию персонажа и
+    /// выкидывает новый вход в мир — LaunchCharacter держит паузу.
+    /// </summary>
+    public DateTime LastKillUtc { get; set; } = DateTime.MinValue;
+
     public string GetTotpSecret() => string.IsNullOrEmpty(EncryptedTotp)
         ? string.Empty
         : DpapiProtector.Unprotect(EncryptedTotp);

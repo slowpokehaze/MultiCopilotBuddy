@@ -57,6 +57,13 @@ public sealed class WowLauncher
     /// <summary>Сколько секунд после старта считаем сессию Launching, потом Running.</summary>
     public int LaunchingGraceSec { get; set; } = 90;
 
+    /// <summary>
+    /// Секунды послеKillAliveClient, в течение которых перезапуск аккаунта
+    /// блокируется: сервер держит «призрачную» сессию убитого клиента и
+    /// выкидывает новый вход в мир (найдено в бою 2026-11-19).
+    /// </summary>
+    public static int KillGhostGuardSec { get; set; } = 240;
+
     /// <summary>Wow.exe запущен и жив? imageName (без расширения) защищает от переиспользования PID.</summary>
     public static bool IsProcessAlive(int pid, string? imageName = null)
     {
@@ -213,6 +220,23 @@ public sealed class WowLauncher
                     McbLog.Warn("Launch", $"{account.Login}: cooldown, ещё {remaining} с");
                     return LaunchResult.Fail(LaunchFailure.Cooldown,
                         $"Cooldown аккаунта '{account.Login}': ещё {remaining} с.", remaining);
+                }
+            }
+
+            // 2б. Защита от «призрачной сессии»: убитый процессом клиент не
+            // выходит корректно, сервер ещё держит персонажа и выкидывает
+            // новый вход в мир сразу после загрузки. Держим паузу.
+            if (account.LastKillUtc != DateTime.MinValue)
+            {
+                var sinceKill = (DateTime.UtcNow - account.LastKillUtc).TotalSeconds;
+                if (sinceKill < KillGhostGuardSec)
+                {
+                    var wait = (int)(KillGhostGuardSec - sinceKill);
+                    McbLog.Warn("Launch",
+                        $"{account.Login}: клиента убили {sinceKill:F0} с назад — сервер ещё держит сессию персонажа, повтор через {wait} с");
+                    return LaunchResult.Fail(LaunchFailure.Cooldown,
+                        $"Клиент аккаунта '{account.Login}' был убит {sinceKill:F0} с назад (сервер держит сессию) — повтор через {wait} с.",
+                        wait);
                 }
             }
 
@@ -519,7 +543,15 @@ public sealed class WowLauncher
                 using var process = Process.GetProcessById(session.WowProcessId);
                 process.Kill();
                 process.WaitForExit(waitTimeoutMs);
-                McbLog.Info("Session", $"{accountLogin}: клиент остановлен (PID {session.WowProcessId})");
+                McbLog.Info("Session",
+                    $"{accountLogin}: клиент остановлен (PID {session.WowProcessId}). " +
+                    $"Сессия убита без логаута — сервер ещё держит персонажа, перезапуск заблокирован на {KillGhostGuardSec} с");
+
+                var account = _store.FindAccount(accountLogin);
+                if (account is not null)
+                {
+                    account.LastKillUtc = DateTime.UtcNow;
+                }
             }
             catch (ArgumentException)
             {
