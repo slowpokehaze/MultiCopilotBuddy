@@ -299,6 +299,17 @@ public sealed class WowLauncher
             // 6. autologin.json: убираем переживший файл предыдущего запуска, пишем новый.
             try
             {
+                var slowEnter = _store.Config.Launch.SlowEnter;
+                if (slowEnter)
+                {
+                    // DLL только логинится; вход в мир — аддон с человеческими
+                    // паузами (сервер вылогинивает «быстрые» входы). Экспортные
+                    // файлы чистим: появление нового — сигнал «клиент
+                    // залогинился», им же сериализуются мульти-запуски.
+                    GlueLoginCred.EnsureAddon(wowDir);
+                    GlueLoginCred.DeleteCharListExports(wowDir);
+                }
+
                 AutologinFile.Delete(wowDir);
                 AutologinFile.Write(wowDir, new AutologinRequest
                 {
@@ -306,12 +317,14 @@ public sealed class WowLauncher
                     Password = password,
                     Realmlist = account.Realmlist,
                     RealmName = account.Realm,
-                    Character = character?.Name ?? string.Empty,
+                    Character = slowEnter ? string.Empty : (character?.Name ?? string.Empty),
                     TotpSecret = account.GetTotpSecret(),
                 });
 
                 // Config.lua для MCBuddy-аддона (рорстер в игре, harvest, флаги).
-                AddonConfigWriter.Write(wowDir, _store, account, harvestChars: harvestChars);
+                // В SlowEnter ещё и цель входа для аддона MCBGlueLogin.
+                AddonConfigWriter.Write(wowDir, _store, account, harvestChars: harvestChars,
+                    enterCharacter: character?.Name);
             }
             catch (Exception ex)
             {
@@ -374,6 +387,26 @@ public sealed class WowLauncher
             McbLog.Info("Autologin", consumed
                 ? $"{account.Login}: autologin.json забран DLL за {(DateTime.UtcNow - waitStart).TotalSeconds:F1} с"
                 : $"{account.Login}: autologin.json НЕ забран за 60 с (DLL не прочитала креды!)");
+
+            if (_store.Config.Launch.SlowEnter)
+            {
+                // Ждём подтверждения логина: файл экспорта рорстера появляется,
+                // когда DLL получает список персонажей — клиент залогинился и его
+                // glue-аддон уже прочёл Cred.lua. После этого можно перезаписывать
+                // креды под следующий запуск.
+                var loginStart = DateTime.UtcNow;
+                var loggedIn = GlueLoginCred.WaitLoggedIn(wowDir, TimeSpan.FromSeconds(90));
+                if (loggedIn)
+                {
+                    McbLog.Info("Autologin",
+                        $"{account.Login}: логин подтверждён (экспорт рорстера) за {(DateTime.UtcNow - loginStart).TotalSeconds:F0} с");
+                }
+                else
+                {
+                    McbLog.Warn("Autologin",
+                        $"{account.Login}: подтверждения логина нет за 90 с (неверный пароль? нет ответа сервера?) — продолжаю");
+                }
+            }
 
             // 9. Учёт: cooldown и сессия.
             account.LastLaunchUtc = DateTime.UtcNow;
