@@ -142,12 +142,22 @@ public static class GlueLoginCred
         File.WriteAllText(luaPath, lua, new UTF8Encoding(false));
     }
 
-    /// <summary>Удаляет файлы экспорта рорстера (&lt;login&gt;__&lt;hash&gt;.json) у Wow.exe.</summary>
+    /// <summary>Папка экспорта рорстера DLL (CommandLine.cpp: Wow.exe dir + WowManagerData).</summary>
+    private static string ExportDirectory(string wowDirectory)
+        => Path.Combine(wowDirectory, "WowManagerData");
+
+    /// <summary>Удаляет файлы экспорта рорстера (&lt;login&gt;__&lt;hash&gt;.json).</summary>
     public static void DeleteCharListExports(string wowDirectory)
     {
+        var dir = ExportDirectory(wowDirectory);
+        if (!Directory.Exists(dir))
+        {
+            return;
+        }
+
         try
         {
-            foreach (var file in Directory.EnumerateFiles(wowDirectory, "*__*.json"))
+            foreach (var file in Directory.EnumerateFiles(dir, "*__*.json"))
             {
                 if (CharListExportPattern.IsMatch(Path.GetFileName(file)))
                 {
@@ -172,12 +182,14 @@ public static class GlueLoginCred
     /// </summary>
     public static bool WaitLoggedIn(string wowDirectory, TimeSpan timeout)
     {
+        var dir = ExportDirectory(wowDirectory);
         var deadline = DateTime.UtcNow + timeout;
         while (DateTime.UtcNow < deadline)
         {
             try
             {
-                if (Directory.EnumerateFiles(wowDirectory, "*__*.json")
+                if (Directory.Exists(dir)
+                    && Directory.EnumerateFiles(dir, "*__*.json")
                     .Any(f => CharListExportPattern.IsMatch(Path.GetFileName(f))))
                 {
                     return true;
