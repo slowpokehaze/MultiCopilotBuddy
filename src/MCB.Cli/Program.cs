@@ -57,6 +57,7 @@ public static class Program
                 "stop" => Stop(configPath, rest),
                 "sessions" => SessionsCmd(configPath),
                 "watch" => Watch(configPath, rest),
+                "attach" => AttachCmd(configPath, rest),
                 "set-loader" => SetLoader(configPath, rest),
                 "clear-loader" => ClearLoader(configPath),
                 "set-session" => SetSession(configPath, rest),
@@ -482,6 +483,42 @@ public static class Program
 
         Console.WriteLine("Watch остановлен.");
         return 0;
+    }
+
+    private static int AttachCmd(string configPath, string[] args)
+    {
+        if (args.Length < 1)
+        {
+            Console.Error.WriteLine("Использование: attach <account>  — запустить CopilotBuddy для живого клиента");
+            return 2;
+        }
+
+        var store = new MultiAccountStore(configPath);
+        var account = store.FindAccount(args[0]) ?? throw new InvalidOperationException($"Аккаунт '{args[0]}' не найден.");
+        var launcher = new WowLauncher(store);
+        var session = launcher.FindAliveSession(account.Login);
+        if (session is null)
+        {
+            Console.Error.WriteLine("Живого клиента нет.");
+            return 1;
+        }
+
+        var exe = BotAttacher.ResolveCopilotBuddyExe(store);
+        Console.WriteLine($"Бот: {exe ?? "НЕ НАЙДЕН"}");
+        Console.WriteLine($"Аргументы: {BotAttacher.BuildArguments(session.WowProcessId, session)}");
+        var port = BotAttacher.AssignBridgePort(store, session);
+        Console.WriteLine($"Порт моста: {port}");
+        var pid = BotAttacher.Attach(store, session);
+        if (pid > 0)
+        {
+            Console.WriteLine($"CopilotBuddy запущен, PID {pid}.");
+        }
+        else
+        {
+            Console.WriteLine($"Attach НЕ УДАЛСЯ: {BotAttacher.LastAttachError ?? "причина неизвестна (pid=0 без исключения)"}");
+        }
+        store.Save();
+        return pid > 0 ? 0 : 1;
     }
 
     private static int PrintLaunchResult(LaunchResult result)

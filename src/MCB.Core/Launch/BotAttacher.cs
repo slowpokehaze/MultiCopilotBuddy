@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
@@ -96,11 +97,73 @@ public static class BotAttacher
 
             return pid;
         }
-        catch (Exception)
+        catch (Win32Exception)
         {
+            // CopilotBuddy.exe имеет манифест requireAdministrator: из
+            // не-админской сессии прямой старт даёт ERROR_CANCELLED.
+            // Fallback: ShellExecute с runas — Windows покажет UAC-запрос.
+            return StartElevated(store, session, exe);
+        }
+        catch (Exception ex)
+        {
+            LastAttachError = ex.GetType().Name + ": " + ex.Message;
             return 0;
         }
     }
+
+    private static int StartElevated(MultiAccountStore store, SessionModel session, string exe)
+    {
+        try
+        {
+            var before = Process.GetProcessesByName("CopilotBuddy").Select(p => p.Id).ToHashSet();
+            using var process = Process.Start(new ProcessStartInfo(exe, BuildArguments(session.WowProcessId, session))
+            {
+                UseShellExecute = true,
+                Verb = "runas",
+                WorkingDirectory = Path.GetDirectoryName(exe) ?? string.Empty,
+            });
+
+            var pid = 0;
+            try
+            {
+                pid = process?.Id ?? 0;
+            }
+            catch
+            {
+                // elevated-процесс: Id может быть недоступен — определяем по диффу
+            }
+
+            if (pid <= 0)
+            {
+                for (var attempt = 0; attempt < 10 && pid <= 0; attempt++)
+                {
+                    Thread.Sleep(1000);
+                    pid = Process.GetProcessesByName("CopilotBuddy")
+                        .FirstOrDefault(p => !before.Contains(p.Id))?.Id ?? 0;
+                }
+            }
+
+            if (pid > 0)
+            {
+                session.BotProcessId = pid;
+                WriteSessionsFile(store, Path.GetDirectoryName(exe)!);
+            }
+            else
+            {
+                LastAttachError = "UAC-запрос отклонён или бот не появился в процессах.";
+            }
+
+            return pid;
+        }
+        catch (Exception ex)
+        {
+            LastAttachError = "elevated: " + ex.GetType().Name + ": " + ex.Message;
+            return 0;
+        }
+    }
+
+    /// <summary>Последняя ошибка Attach (для диагностики из CLI/UI).</summary>
+    public static string? LastAttachError { get; private set; }
 
     // ---------- MCBBridge: sessions.json ----------
 
