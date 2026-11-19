@@ -1,0 +1,8 @@
+## Interface: 30300
+## Title: MCBuddy
+## Notes: Roster, quick character switch, friends sync, LFG (Multi Copilot Buddy)
+## Author: MCB
+## SavedVariables: MCBuddyDB
+## SavedVariablesPerCharacter: MCBuddyCharDB
+Config.lua
+MCBuddy.lua
