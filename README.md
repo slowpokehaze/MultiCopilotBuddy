@@ -91,11 +91,16 @@ dotnet MCB.Cli.dll roster                    # таблица персонаже
 dotnet MCB.Cli.dll parse-lua <файл.lua>      # диагностика: разбор SavedVariables
 dotnet MCB.Cli.dll harvest [acc...] [--chars A,B] [--all] [--timeout 15]
                                              # собрать голд по аккаунтам (аддон обходит список сам)
+dotnet MCB.Cli.dll stop-all                  # остановить все живые сессии
+dotnet MCB.Cli.dll set-schedule <acc> <HH:mm-HH:mm> [days]  # окно ботинга (Mo,Tu,.../all)
+dotnet MCB.Cli.dll clear-schedule <acc>      # убрать расписание
+dotnet MCB.Cli.dll next-char <acc>           # очередь: следующий персонаж через мост
+dotnet MCB.Cli.dll import-wowmanager <characters.json> [--wow <путь>]  # миграция из WowManager
 ```
 
-## Статус (Этапы 0–4)
+## Статус (Этапы 0–6)
 
-Готово (2026-11-19), selftest 69/69 PASS:
+Готово (2026-11-19), selftest 82/82 PASS:
 
 - `MCB.Core/Launch/AutologinFile` — протокол autologin.json (wow-autologin):
   UTF-8 без BOM, ключи login/password/realmlist/realmname/character/totp_secret,
@@ -129,6 +134,17 @@ dotnet MCB.Cli.dll harvest [acc...] [--chars A,B] [--all] [--timeout 15]
 - `MCB.Manager/DashboardWindow` — дашборд: таблица персонажей
   (голд/ГС/ilvl/зона), скан рорстера, harvest, переключатель ru/en
   (`MCB.Core/L10n/Strings`, язык в `Ui.Language`).
+- `MCB.Manager/SessionsWindow` — список сессий со статусами (PID клиента/бота,
+  рестарты, мост), запуск/стоп, автообновление.
+- `MCB.Core/Launch/BotCopyManager` — опциональная копия папки бота на сессию
+  (`Launch.BotCopyPerSession`); аудит мульти-сессий — `docs/stage5-audit.md`.
+- `MCB.Core/Migration/WowManagerImporter` — импорт из WowManager
+  (characters.json; пароли plain/`enc:v1:` DPAPI → перешифровка в DPAPI MCB).
+- Расписание (`AccountModel.Schedule`) и очередь персонажей
+  (`SessionModel.RotationHours`) обрабатываются `SessionManager`.
+- Сборка без SDK — Roslyn-тулсет (csc) через dotnet runtime 10 x86; рецепты
+  скриптов сборки (списки исходников, ссылки на DLL) — в `docs/plan.md` §9
+  и в истории: `build.ps1`/`build-manager.ps1` в temp (`mcb-build`).
 
 Реальный запуск (требует аккаунт в конфиге): `launch <account> [char]`.
 Wow.exe должен быть пропатчен (на этой машине — уже) и рядом должен лежать
