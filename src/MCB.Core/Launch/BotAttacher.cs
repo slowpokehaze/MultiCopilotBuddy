@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
+using MCB.Core.Logging;
 using MCB.Core.Models;
 using MCB.Core.Storage;
 
@@ -70,6 +71,10 @@ public static class BotAttacher
         var originalExe = ResolveCopilotBuddyExe(store);
         if (originalExe is null || session.WowProcessId <= 0)
         {
+            LastAttachError = originalExe is null
+                ? "CopilotBuddy.exe не найден (проверь Launch.CopilotBuddyExePath)"
+                : "нет живого WoW-клиента для аттача";
+            McbLog.Warn("Attach", $"{session.AccountLogin}: {LastAttachError}");
             return 0;
         }
 
@@ -77,12 +82,17 @@ public static class BotAttacher
         var exe = BotCopyManager.ResolveBotExe(store, session, originalExe);
         if (exe is null)
         {
+            LastAttachError = "не удалось создать/разрешить копию бота";
+            McbLog.Warn("Attach", $"{session.AccountLogin}: {LastAttachError}");
             return 0;
         }
 
+        var args = BuildArguments(session.WowProcessId, session);
+        McbLog.Info("Attach", $"{session.AccountLogin}: запуск {exe} {args}");
+
         try
         {
-            using var process = Process.Start(new ProcessStartInfo(exe, BuildArguments(session.WowProcessId, session))
+            using var process = Process.Start(new ProcessStartInfo(exe, args)
             {
                 UseShellExecute = false,
                 WorkingDirectory = Path.GetDirectoryName(exe) ?? string.Empty,
@@ -93,6 +103,7 @@ public static class BotAttacher
                 session.BotProcessId = pid;
                 // sessions.json — в папку конкретного бота (оригинал или копия).
                 WriteSessionsFile(store, Path.GetDirectoryName(exe)!);
+                McbLog.Info("Attach", $"{session.AccountLogin}: CopilotBuddy запущен напрямую, PID {pid}");
             }
 
             return pid;
@@ -102,11 +113,14 @@ public static class BotAttacher
             // CopilotBuddy.exe имеет манифест requireAdministrator: из
             // не-админской сессии прямой старт даёт ERROR_CANCELLED.
             // Fallback: ShellExecute с runas — Windows покажет UAC-запрос.
+            McbLog.Info("Attach",
+                $"{session.AccountLogin}: прямой старт отклонён (манифест requireAdministrator) — UAC-fallback, жди подтверждения");
             return StartElevated(store, session, exe);
         }
         catch (Exception ex)
         {
             LastAttachError = ex.GetType().Name + ": " + ex.Message;
+            McbLog.Error("Attach", $"{session.AccountLogin}: аттач упал: {LastAttachError}", ex);
             return 0;
         }
     }
@@ -147,10 +161,12 @@ public static class BotAttacher
             {
                 session.BotProcessId = pid;
                 WriteSessionsFile(store, Path.GetDirectoryName(exe)!);
+                McbLog.Info("Attach", $"{session.AccountLogin}: CopilotBuddy запущен через UAC, PID {pid}");
             }
             else
             {
                 LastAttachError = "UAC-запрос отклонён или бот не появился в процессах.";
+                McbLog.Warn("Attach", $"{session.AccountLogin}: {LastAttachError}");
             }
 
             return pid;
@@ -158,6 +174,7 @@ public static class BotAttacher
         catch (Exception ex)
         {
             LastAttachError = "elevated: " + ex.GetType().Name + ": " + ex.Message;
+            McbLog.Error("Attach", $"{session.AccountLogin}: UAC-fallback упал: {LastAttachError}", ex);
             return 0;
         }
     }

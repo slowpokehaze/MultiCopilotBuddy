@@ -1,5 +1,6 @@
 using MCB.Core.Bridge;
 using MCB.Core.Launch;
+using MCB.Core.Logging;
 using MCB.Core.Models;
 using MCB.Core.Storage;
 
@@ -54,6 +55,9 @@ public sealed class SessionManager
                 && !scheduleAccount.Schedule.IsActiveNow
                 && WowLauncher.IsProcessAlive(session.WowProcessId, session.WowImageName))
             {
+                McbLog.Info("Session",
+                    $"{session.AccountLogin}: вне окна расписания " +
+                    $"({scheduleAccount.Schedule.Start}-{scheduleAccount.Schedule.End}, {scheduleAccount.Schedule.Days}) — глушу клиента (PID {session.WowProcessId})");
                 _launcher.KillAliveClient(session.AccountLogin);
                 session.WowProcessId = 0;
                 session.BotProcessId = 0;
@@ -73,12 +77,20 @@ public sealed class SessionManager
                 var next = NextRotationCharacter(scheduleAccount, session.CharacterName);
                 if (next is not null && session.BridgePort > 0)
                 {
+                    McbLog.Info("Bridge",
+                        $"{session.AccountLogin}: ротация каждые {session.RotationHours} ч — переключаю на '{next}' (порт {session.BridgePort})");
                     var response = BotBridgeClient.SwitchCharacter(session.BridgePort, next);
                     if (response is not null && response.StartsWith("OK", StringComparison.Ordinal))
                     {
                         session.CharacterName = next;
                         session.LastRotationUtc = DateTime.UtcNow;
                         session.LastUpdatedUtc = DateTime.UtcNow;
+                        McbLog.Info("Bridge", $"{session.AccountLogin}: ротация на '{next}' выполнена");
+                    }
+                    else
+                    {
+                        McbLog.Warn("Bridge",
+                            $"{session.AccountLogin}: мост не ответил на смену персонажа '{next}': {response ?? "нет ответа"}");
                     }
                 }
             }
@@ -91,6 +103,8 @@ public sealed class SessionManager
                     && (DateTime.UtcNow - session.LastUpdatedUtc).TotalSeconds > _launcher.LaunchingGraceSec)
                 {
                     session.State = SessionState.Running;
+                    McbLog.Info("Session",
+                        $"{session.AccountLogin}: клиент жив (PID {session.WowProcessId}), состояние Running");
                 }
 
                 if (session.State == SessionState.Running || session.State == SessionState.InGame || session.State == SessionState.Botting)
@@ -110,6 +124,7 @@ public sealed class SessionManager
                     if (session.State == SessionState.Running && inWorld.Contains(session.WowProcessId))
                     {
                         session.State = SessionState.InGame;
+                        McbLog.Info("Session", $"{session.AccountLogin}: клиент в мире (PID {session.WowProcessId}), состояние InGame");
                     }
                 }
 
@@ -133,6 +148,13 @@ public sealed class SessionManager
                             ? SessionState.InGame
                             : SessionState.Botting;
                         session.LastUpdatedUtc = DateTime.UtcNow;
+                        McbLog.Info("Attach",
+                            $"{session.AccountLogin}: CopilotBuddy запущен (PID {botPid}), бот '{session.BotName}', состояние {session.State}");
+                    }
+                    else
+                    {
+                        McbLog.Warn("Attach",
+                            $"{session.AccountLogin}: аттач не удался: {BotAttacher.LastAttachError ?? "причина неизвестна"} (повтор через {BotAttachRetrySec} с)");
                     }
                 }
 
@@ -140,6 +162,11 @@ public sealed class SessionManager
             }
 
             // Процесс мёртв.
+            if (session.State != SessionState.Crashed)
+            {
+                McbLog.Warn("Session",
+                    $"{session.AccountLogin}: клиент мёртв (PID {session.WowProcessId}), состояние Crashed, рестартов уже {session.RestartCount}");
+            }
             session.State = SessionState.Crashed;
             session.LastUpdatedUtc = DateTime.UtcNow;
             session.WowProcessId = 0;
@@ -156,6 +183,8 @@ public sealed class SessionManager
                         session.WowProcessId = result.ProcessId;
                         session.State = SessionState.Launching;
                         session.LastUpdatedUtc = DateTime.UtcNow;
+                        McbLog.Info("Session",
+                            $"{session.AccountLogin}: авторестарт ({session.RestartCount}/{MaxConsecutiveRestarts}), новый PID {result.ProcessId}, персонаж '{session.CharacterName}'");
                     }
                     // Cooldown → сессия остаётся Crashed, повтор на следующем Pulse.
                 }
@@ -169,6 +198,7 @@ public sealed class SessionManager
     /// <summary>Остановить все живые сессии (Этап 5).</summary>
     public int StopAll()
     {
+        McbLog.Info("Session", "StopAll: остановка всех живых сессий");
         var stopped = 0;
         foreach (var session in _store.Config.Sessions.ToList())
         {

@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Threading;
 using MCB.Core.Addon;
+using MCB.Core.Logging;
 using MCB.Core.Models;
 using MCB.Core.Storage;
 
@@ -196,6 +197,8 @@ public sealed class WowLauncher
             var alive = FindAliveSession(account.Login);
             if (alive is not null && !allowWhenRunning)
             {
+                McbLog.Warn("Launch",
+                    $"{account.Login}: отказ — клиент уже жив (PID {alive.WowProcessId}, сессия {alive.Id})");
                 return LaunchResult.Fail(LaunchFailure.AlreadyRunning,
                     $"Клиент аккаунта '{account.Login}' уже жив (PID {alive.WowProcessId}, сессия {alive.Id}).");
             }
@@ -207,6 +210,7 @@ public sealed class WowLauncher
                 var remaining = CooldownSec - (int)elapsed.TotalSeconds;
                 if (remaining > 0)
                 {
+                    McbLog.Warn("Launch", $"{account.Login}: cooldown, ещё {remaining} с");
                     return LaunchResult.Fail(LaunchFailure.Cooldown,
                         $"Cooldown аккаунта '{account.Login}': ещё {remaining} с.", remaining);
                 }
@@ -216,6 +220,8 @@ public sealed class WowLauncher
             var (exePath, wowDir) = ResolveWowPath(account.WowPath);
             if (string.IsNullOrEmpty(exePath) || !File.Exists(exePath))
             {
+                McbLog.Error("Launch",
+                    $"{account.Login}: Wow.exe не найден по пути '{account.WowPath}'");
                 return LaunchResult.Fail(LaunchFailure.MissingWowExe,
                     $"Wow.exe не найден по WowPath аккаунта '{account.Login}': '{account.WowPath}'.");
             }
@@ -291,11 +297,15 @@ public sealed class WowLauncher
             // 7. Старт процесса: через внешний лоадер или напрямую.
             int pid;
             string imageName;
+            McbLog.Info("Launch",
+                $"{account.Login}: старт {exePath} (персонаж: {character?.Name ?? "<только логин>"}), " +
+                $"realmlist={account.Realmlist}, realm={account.Realm}");
             if (IsLoaderConfigured(out var loaderProblem))
             {
                 if (loaderProblem is not null)
                 {
                     AutologinFile.Delete(wowDir);
+                    McbLog.Error("Launch", $"{account.Login}: лоадер не настроен: {loaderProblem}");
                     return LaunchResult.Fail(LaunchFailure.SpawnError, loaderProblem);
                 }
 
@@ -303,6 +313,7 @@ public sealed class WowLauncher
                 if (!viaLoader.started)
                 {
                     AutologinFile.Delete(wowDir);
+                    McbLog.Error("Launch", $"{account.Login}: лоадер не смог запустить клиент: {viaLoader.error}");
                     return LaunchResult.Fail(LaunchFailure.SpawnError, viaLoader.error);
                 }
 
@@ -324,14 +335,21 @@ public sealed class WowLauncher
                 catch (Exception ex)
                 {
                     AutologinFile.Delete(wowDir);
+                    McbLog.Error("Launch", $"{account.Login}: запуск {exePath} не удался", ex);
                     return LaunchResult.Fail(LaunchFailure.SpawnError, $"Запуск {exePath} не удался: {ex.Message}");
                 }
             }
 
+            McbLog.Info("Launch", $"{account.Login}: Wow.exe запущен, PID {pid}");
+
             // 8. Ждём, пока DLL клиента заберёт autologin.json (удаляет после
             // чтения). Иначе следующий запуск перезапишет файл и этот клиент
             // войдёт без кредов или с чужими (гонка при мульти-запуске).
-            AutologinFile.WaitConsumed(wowDir, TimeSpan.FromSeconds(60));
+            var waitStart = DateTime.UtcNow;
+            var consumed = AutologinFile.WaitConsumed(wowDir, TimeSpan.FromSeconds(60));
+            McbLog.Info("Autologin", consumed
+                ? $"{account.Login}: autologin.json забран DLL за {(DateTime.UtcNow - waitStart).TotalSeconds:F1} с"
+                : $"{account.Login}: autologin.json НЕ забран за 60 с (DLL не прочитала креды!)");
 
             // 9. Учёт: cooldown и сессия.
             account.LastLaunchUtc = DateTime.UtcNow;
@@ -344,6 +362,8 @@ public sealed class WowLauncher
             session.LastUpdatedUtc = DateTime.UtcNow;
 
             _store.Save();
+            McbLog.Info("Session",
+                $"Сессия {account.Login}: PID {pid}, персонаж {session.CharacterName}, состояние Launching");
             return LaunchResult.Ok(pid);
         }
     }
@@ -499,6 +519,7 @@ public sealed class WowLauncher
                 using var process = Process.GetProcessById(session.WowProcessId);
                 process.Kill();
                 process.WaitForExit(waitTimeoutMs);
+                McbLog.Info("Session", $"{accountLogin}: клиент остановлен (PID {session.WowProcessId})");
             }
             catch (ArgumentException)
             {

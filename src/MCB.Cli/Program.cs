@@ -5,6 +5,7 @@ using MCB.Core.Bridge;
 using MCB.Core.Harvest;
 using MCB.Core.L10n;
 using MCB.Core.Launch;
+using MCB.Core.Logging;
 using MCB.Core.Migration;
 using MCB.Core.Models;
 using MCB.Core.Roster;
@@ -41,6 +42,11 @@ public static class Program
                 rest = rest.Take(idx).Concat(rest.Skip(idx + 2)).ToArray();
             }
 
+            if (command != "log")
+            {
+                McbLog.Info("Cli", $"команда: {command} {string.Join(' ', rest)}");
+            }
+
             return command switch
             {
                 "selftest" => SelfTest(configPath),
@@ -58,6 +64,7 @@ public static class Program
                 "sessions" => SessionsCmd(configPath),
                 "watch" => Watch(configPath, rest),
                 "attach" => AttachCmd(configPath, rest),
+                "log" => LogCmd(rest),
                 "set-loader" => SetLoader(configPath, rest),
                 "clear-loader" => ClearLoader(configPath),
                 "set-session" => SetSession(configPath, rest),
@@ -128,6 +135,7 @@ public static class Program
               stop <account>                 # остановить бота и клиента
               sessions                       # статусы сессий
               watch [--interval 5]           # мониторинг + автоперезапуск (Ctrl+C — стоп)
+              log [n]                        # последние n строк лога (logs\mcb-<дата>.log)
               set-loader <loaderExe> <windowTitle> <buttonText>
                                              # запуск Wow.exe через внешний лоадер
               clear-loader                   # убрать лоадер (прямой запуск)
@@ -467,6 +475,7 @@ public static class Program
         };
 
         Console.WriteLine($"Watch: опрос каждые {interval} с, Ctrl+C — стоп.");
+        McbLog.Info("Cli", $"watch запущен (интервал {interval} с)");
         while (!cts.IsCancellationRequested)
         {
             var sessions = manager.Pulse();
@@ -486,6 +495,31 @@ public static class Program
         }
 
         Console.WriteLine("Watch остановлен.");
+        return 0;
+    }
+
+    /// <summary>Хвост лога: log [n] — последние n строк (по умолчанию 50).</summary>
+    private static int LogCmd(string[] args)
+    {
+        var count = 50;
+        if (args.Length > 0 && int.TryParse(args[0], out var parsed))
+        {
+            count = Math.Clamp(parsed, 1, 5000);
+        }
+
+        var lines = MCB.Core.Logging.McbLog.Tail(count);
+        if (lines.Count == 0)
+        {
+            Console.WriteLine($"Лог пуст. Файл: {MCB.Core.Logging.McbLog.CurrentFile}");
+            return 0;
+        }
+
+        Console.WriteLine($"--- {MCB.Core.Logging.McbLog.CurrentFile} (последние {lines.Count}) ---");
+        foreach (var line in lines)
+        {
+            Console.WriteLine(line);
+        }
+
         return 0;
     }
 
