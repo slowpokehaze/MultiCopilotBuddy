@@ -21,6 +21,14 @@ public sealed class SessionManager
     /// <summary>Минимальный интервал между попытками аттача бота, с.</summary>
     public int BotAttachRetrySec { get; set; } = 30;
 
+    /// <summary>
+    /// Перечитывать конфиг с диска в начале каждого пульса. Включает CLI watch:
+    /// launch/stop в других процессах пишут конфиг между пульсами, и без
+    /// перечитывания watch затирает их изменения своей устаревшей копией
+    /// (бой 2026-11-19: сессии живых клиентов откатились в Idle).
+    /// </summary>
+    public bool ReloadOnPulse { get; set; }
+
     public SessionManager(MultiAccountStore store, WowLauncher launcher)
     {
         _store = store;
@@ -30,6 +38,20 @@ public sealed class SessionManager
     /// <summary>Один проход по всем сессиям. Возвращает актуальный список.</summary>
     public IReadOnlyList<SessionModel> Pulse()
     {
+        if (ReloadOnPulse)
+        {
+            try
+            {
+                _store.Load();
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException
+                                       or System.Text.Json.JsonException)
+            {
+                McbLog.Warn("Session",
+                    $"конфиг занят/битый, работаем по предыдущей копии: {ex.Message}");
+            }
+        }
+
         foreach (var session in _store.Config.Sessions.ToList())
         {
             if (session.State == SessionState.Disabled)

@@ -466,6 +466,7 @@ public static class Program
         var store = new MultiAccountStore(configPath);
         var launcher = new WowLauncher(store);
         var manager = new SessionManager(store, launcher);
+        manager.ReloadOnPulse = true;   // launch/stop в других процессах правят конфиг
 
         using var cts = new CancellationTokenSource();
         Console.CancelKeyPress += (_, e) =>
