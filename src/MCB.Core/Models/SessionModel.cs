@@ -31,6 +31,13 @@ public sealed class SessionModel
     /// <summary>Автоматически запускать CopilotBuddy для сессии (когда задан BotName).</summary>
     public bool AutoAttach { get; set; } = true;
 
+    /// <summary>
+    /// Сколько раз подряд бот не продержался после запуска (клиент на экране
+    /// выбора персонажа и т.п.). Растит паузу между повторами аттача —
+    /// иначе UAC-запрос сыпется каждые 30 секунд.
+    /// </summary>
+    public int AttachFailCount { get; set; }
+
     /// <summary>Сколько раз подряд перезапускали безуспешно (сбрасывается при живом клиенте).</summary>
     public int RestartCount { get; set; }
 

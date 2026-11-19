@@ -128,33 +128,57 @@ public sealed class SessionManager
                     }
                 }
 
+                // Бот жив дольше 5 минут — серия неудач закрыта, backoff сбрасываем.
+                var sinceAttachSec = (DateTime.UtcNow - session.BotLastAttachUtc).TotalSeconds;
+                if (WowLauncher.IsProcessAlive(session.BotProcessId, "CopilotBuddy") && sinceAttachSec > 300)
+                {
+                    if (session.AttachFailCount > 0)
+                    {
+                        session.AttachFailCount = 0;
+                    }
+                }
+
                 // Аттач/перезапуск бота: только когда клиент уже В МИРЕ (после
                 // логина и входа — иначе бот стартует на логин-скрине и падает).
-                // Повтор попытки не чаще раза в 30 с — чтобы не плодить процессы.
+                // Бот, умерший быстро после старта (клиент на экране выбора
+                // персонажа → «No available WoW»), растит backoff: 30 с → 1 мин →
+                // 2 мин → … до 10 мин, чтобы не молотить UAC-запросы.
                 if (session.AutoAttach
                     && session.State is SessionState.InGame or SessionState.Botting
                     && inWorld is not null
                     && inWorld.Contains(session.WowProcessId)
-                    && !WowLauncher.IsProcessAlive(session.BotProcessId, "CopilotBuddy")
-                    && (DateTime.UtcNow - session.BotLastAttachUtc).TotalSeconds >= BotAttachRetrySec)
+                    && !WowLauncher.IsProcessAlive(session.BotProcessId, "CopilotBuddy"))
                 {
-                    session.BotLastAttachUtc = DateTime.UtcNow;
-                    _ = BotAttacher.AssignBridgePort(_store, session);
-                    var botPid = BotAttacher.Attach(_store, session);
-                    if (botPid > 0)
+                    if (session.BotProcessId > 0 && sinceAttachSec < 300)
                     {
-                        session.BotProcessId = botPid;
-                        session.State = string.IsNullOrWhiteSpace(session.BotName)
-                            ? SessionState.InGame
-                            : SessionState.Botting;
-                        session.LastUpdatedUtc = DateTime.UtcNow;
-                        McbLog.Info("Attach",
-                            $"{session.AccountLogin}: CopilotBuddy запущен (PID {botPid}), бот '{session.BotName}', состояние {session.State}");
-                    }
-                    else
-                    {
+                        session.AttachFailCount++;
                         McbLog.Warn("Attach",
-                            $"{session.AccountLogin}: аттач не удался: {BotAttacher.LastAttachError ?? "причина неизвестна"} (повтор через {BotAttachRetrySec} с)");
+                            $"{session.AccountLogin}: CopilotBuddy (PID {session.BotProcessId}) продержался {sinceAttachSec:F0} с — " +
+                            $"неудача #{session.AttachFailCount} (клиент не в мире? бот не нашёл процесс?)");
+                    }
+
+                    var backoffSec = Math.Min(BotAttachRetrySec << Math.Min(session.AttachFailCount, 5), 600);
+                    if (sinceAttachSec >= backoffSec)
+                    {
+                        session.BotLastAttachUtc = DateTime.UtcNow;
+                        _ = BotAttacher.AssignBridgePort(_store, session);
+                        var botPid = BotAttacher.Attach(_store, session);
+                        if (botPid > 0)
+                        {
+                            session.BotProcessId = botPid;
+                            session.State = string.IsNullOrWhiteSpace(session.BotName)
+                                ? SessionState.InGame
+                                : SessionState.Botting;
+                            session.LastUpdatedUtc = DateTime.UtcNow;
+                            McbLog.Info("Attach",
+                                $"{session.AccountLogin}: CopilotBuddy запущен (PID {botPid}), бот '{session.BotName}', состояние {session.State}");
+                        }
+                        else
+                        {
+                            McbLog.Warn("Attach",
+                                $"{session.AccountLogin}: аттач не удался: {BotAttacher.LastAttachError ?? "причина неизвестна"} " +
+                                $"(следующий повтор через {backoffSec} с)");
+                        }
                     }
                 }
 
