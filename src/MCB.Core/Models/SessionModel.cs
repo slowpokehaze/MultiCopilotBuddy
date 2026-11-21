@@ -13,6 +13,14 @@ public sealed class SessionModel
     /// <summary>Имя бота (GrindBuddy / PartyBot / Questing …).</summary>
     public string BotName { get; set; } = string.Empty;
 
+    /// <summary>
+    /// Сессия-лидер группы: групповой запуск «Запустить всё» начинает с неё
+    /// и ждёт полной загрузки её бота, прежде чем запускать ведомых —
+    /// LeaderPlugin (PartyBot) должен стартовать раньше всех (приглашает
+    /// группу, ведомые ловят инвайты AcceptGroupInvitesFromLeader).
+    /// </summary>
+    public bool IsLeader { get; set; }
+
     /// <summary>Имя combat-рутины (например «Singular wotlk»).</summary>
     public string RoutineName { get; set; } = string.Empty;
 

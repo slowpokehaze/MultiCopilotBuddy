@@ -135,7 +135,15 @@ dotnet MCB.Cli.dll import-wowmanager <characters.json> [--wow <путь>]  # м�
   (голд/ГС/ilvl/зона), скан рорстера, harvest, переключатель ru/en
   (`MCB.Core/L10n/Strings`, язык в `Ui.Language`).
 - `MCB.Manager/SessionsWindow` — список сессий со статусами (PID клиента/бота,
-  рестарты, мост), запуск/стоп, автообновление.
+  рестарты, мост), запуск/стоп, автообновление. Групповой запуск
+  «Запустить всё (лидер первым)» (2026-11-21): кнопка «Сделать лидером»
+  помечает сессию (`SessionModel.IsLeader`, пишется в MultiAccount.json);
+  запуск идёт лидер → ждём загрузки его бота (CopilotBuddy жив >10 с) →
+  ведомые по очереди, каждый следующий — после загрузки бота предыдущего.
+  Так LeaderPlugin (PartyBot) стартует раньше ведомых и корректно собирает
+  группу; бот лидера не загрузился — ведомые не запускаются.
+- `tools/build-manager.ps1` — пересборка MCB.Manager.dll без SDK (Roslyn
+  csc.dll против runtime-сборок shared-фреймворков; нюансы в шапке скрипта).
 - `MCB.Core/Launch/BotCopyManager` — опциональная копия папки бота на сессию
   (`Launch.BotCopyPerSession`); аудит мульти-сессий — `docs/stage5-audit.md`.
 - `MCB.Core/Migration/WowManagerImporter` — импорт из WowManager

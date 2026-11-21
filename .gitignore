@@ -10,6 +10,7 @@ thirdparty/
 
 # Служебное
 repos/
+tools/out/
 /plan.md
 *.bak
 test-*.json

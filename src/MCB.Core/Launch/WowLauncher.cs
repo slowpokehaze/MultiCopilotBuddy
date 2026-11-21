@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Threading;
 using MCB.Core.Addon;
@@ -62,7 +63,7 @@ public sealed class WowLauncher
     /// блокируется: сервер держит «призрачную» сессию убитого клиента и
     /// выкидывает новый вход в мир (найдено в бою 2026-11-19).
     /// </summary>
-    public static int KillGhostGuardSec { get; set; } = 240;
+    public static int KillGhostGuardSec { get; set; } = 0;
 
     /// <summary>Wow.exe запущен и жив? imageName (без расширения) защищает от переиспользования PID.</summary>
     public static bool IsProcessAlive(int pid, string? imageName = null)
@@ -605,7 +606,10 @@ public sealed class WowLauncher
         }
     }
 
-    private static void KillProcess(int pid)
+    /// <summary>Убивает процесс по PID (бот или клиент). Боты запущены elevated
+    /// (манифест requireAdministrator) — из не-админского менеджера прямой Kill
+    /// даёт Access Denied, поэтому fallback: elevated taskkill (UAC подтверждается сам).</summary>
+    public static void KillProcess(int pid)
     {
         if (pid <= 0)
         {
@@ -623,6 +627,23 @@ public sealed class WowLauncher
         }
         catch (InvalidOperationException)
         {
+        }
+        catch (Win32Exception)
+        {
+            try
+            {
+                using var taskkill = Process.Start(new ProcessStartInfo("taskkill", $"/PID {pid} /F /T")
+                {
+                    UseShellExecute = true,
+                    Verb = "runas",
+                    WindowStyle = ProcessWindowStyle.Hidden,
+                });
+                taskkill?.WaitForExit(5000);
+            }
+            catch
+            {
+                // UAC отклонён или процесс уже умер — не критично.
+            }
         }
     }
 }

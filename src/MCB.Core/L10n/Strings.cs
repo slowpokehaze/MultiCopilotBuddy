@@ -47,4 +47,11 @@ public static class Strings
     public static string HideChar => T("Скрыть (tombstone)", "Hide (tombstone)");
     public static string StopAll => T("Остановить всё", "Stop all");
     public static string Sessions => T("Сессии", "Sessions");
+    public static string LaunchAllFirst => T("Запустить всё (лидер первым)", "Launch all (leader first)");
+    public static string LaunchSelectedFirst => T("Запустить выбранные (лидер первым)", "Launch selected (leader first)");
+    public static string RestartBots => T("Перезапустить боты", "Restart bots");
+    public static string BotLauncher => T("Bot Launcher", "Bot Launcher");
+    public static string MakeLeader => T("Сделать лидером", "Make leader");
+    public static string LeaderRole => T("лидер", "leader");
+    public static string Role => T("Роль", "Role");
 }

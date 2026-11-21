@@ -57,9 +57,10 @@ public sealed class DashboardWindow : Window
             buttons.Children.Add(new Border { Width = 8 });
         }
 
-        BuildColumns();
-
+        // GridView обязан существовать ДО BuildColumns: метод делает
+        // (GridView)_roster.View — иначе NRE при открытии дашборда.
         _roster.View = new GridView();
+        BuildColumns();
         _roster.ItemsSource = null;
 
         _status.Margin = new Thickness(0, 8, 0, 0);

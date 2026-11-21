@@ -1,7 +1,10 @@
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Threading;
 using MCB.Core.L10n;
+using MCB.Core.Launch;
 using MCB.Core.Models;
+using MCB.Core.Sessions;
 using MCB.Core.Storage;
 
 namespace MCB.Manager;
@@ -14,6 +17,7 @@ namespace MCB.Manager;
 public sealed class MultiAccountWindow : Window
 {
     private readonly MultiAccountStore _store;
+    private readonly SessionManager _manager;
     private readonly ListBox _accountsList = new();
     private readonly ListBox _charactersList = new();
     private readonly TextBlock _status = new();
@@ -22,6 +26,15 @@ public sealed class MultiAccountWindow : Window
     {
         _store = new MultiAccountStore(configPath);
         Strings.Language = _store.Config.Ui.Language;
+
+        // Один SessionManager на всё приложение + пульс из главного окна:
+        // краш-детект и авторестарт должны работать всегда, а не только пока
+        // открыто окно Bot Launcher (бой 2026-11-21: упавший лидер висел
+        // Crashed, потому что после перезапуска менеджера окно не открывали).
+        _manager = new SessionManager(_store, new WowLauncher(_store));
+        var pulseTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
+        pulseTimer.Tick += (_, _) => _ = _manager.Pulse();
+        pulseTimer.Start();
 
         Title = "Multi Copilot Buddy — " + Strings.Accounts;
         Width = 720;
@@ -34,15 +47,21 @@ public sealed class MultiAccountWindow : Window
         var hideCharButton = new Button { Content = Strings.HideChar, Padding = new Thickness(8, 4, 8, 4) };
         var dashboardButton = new Button { Content = Strings.Dashboard, Padding = new Thickness(8, 4, 8, 4) };
         var sessionsButton = new Button { Content = Strings.Sessions, Padding = new Thickness(8, 4, 8, 4) };
+        var launcherButton = new Button { Content = Strings.BotLauncher, Padding = new Thickness(8, 4, 8, 4) };
 
         addAccountButton.Click += (_, _) => OnAddAccount();
         passwordButton.Click += (_, _) => OnSetPassword();
         addCharButton.Click += (_, _) => OnAddCharacter();
         hideCharButton.Click += (_, _) => OnHideCharacter();
         dashboardButton.Click += (_, _) => new DashboardWindow(_store).Show();
-        sessionsButton.Click += (_, _) => new SessionsWindow(_store).Show();
+        sessionsButton.Click += (_, _) => new SessionsWindow(_store, _manager).Show();
+        launcherButton.Click += (_, _) => new BotLauncherWindow(_store, _manager).Show();
 
         _accountsList.SelectionChanged += (_, _) => RefreshCharacters();
+        // Без этого WPF рисует имя типа («MCB.Core.Models.AccountModel»)
+        // вместо логинов и имён персонажей.
+        _accountsList.DisplayMemberPath = nameof(AccountModel.Login);
+        _charactersList.DisplayMemberPath = nameof(CharacterModel.Name);
         _status.Margin = new Thickness(0, 8, 0, 0);
 
         var buttons = new StackPanel
@@ -50,7 +69,7 @@ public sealed class MultiAccountWindow : Window
             Orientation = Orientation.Horizontal,
             Margin = new Thickness(0, 8, 0, 0),
         };
-        foreach (var button in new[] { addAccountButton, passwordButton, addCharButton, hideCharButton, dashboardButton, sessionsButton })
+        foreach (var button in new[] { addAccountButton, passwordButton, addCharButton, hideCharButton, dashboardButton, sessionsButton, launcherButton })
         {
             buttons.Children.Add(button);
             buttons.Children.Add(new Border { Width = 8 });
@@ -196,7 +215,7 @@ public sealed class MultiAccountWindow : Window
             WindowStartupLocation = WindowStartupLocation.CenterOwner,
             ResizeMode = ResizeMode.NoResize,
             ShowInTaskbar = false,
-            Content = new StackPanel { Margin = new Thickness(12), Children = { input, ok } },
+            Content = new StackPanel { Margin = new Thickness(12), Children = { input } },
         };
 
         var buttonRow = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 8, 0, 0) };
