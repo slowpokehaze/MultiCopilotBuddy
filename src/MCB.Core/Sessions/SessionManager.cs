@@ -48,6 +48,59 @@ public sealed class SessionManager
         _launcher = launcher;
     }
 
+    /// <summary>Ботить через MCB.Agent (integration-cb-into-mcb.md) — из Launch.UseAgent.</summary>
+    private bool UseAgent => _store.Config.Launch.UseAgent;
+
+    /// <summary>
+    /// Жив ли бот сессии: legacy — процесс CopilotBuddy; агент — пайп отвечает
+    /// (Poll заодно обновляет Agent*-статусы) или жив хост dotnet.
+    /// </summary>
+    private bool IsBotAlive(SessionModel session)
+    {
+        if (session.BotProcessId <= 0)
+        {
+            return false;
+        }
+
+        if (!UseAgent)
+        {
+            return WowLauncher.IsProcessAlive(session.BotProcessId, "CopilotBuddy");
+        }
+
+        if (AgentClient.Poll(session))
+        {
+            return true;
+        }
+
+        return WowLauncher.IsProcessAlive(session.BotProcessId, "dotnet");
+    }
+
+    /// <summary>Аттач бота сессии: агент или legacy CopilotBuddy.exe.</summary>
+    private int AttachBot(SessionModel session)
+        => UseAgent
+            ? AgentLauncher.Attach(_store, session)
+            : BotAttacher.Attach(_store, session);
+
+    /// <summary>Мягко остановить бот сессии (агент: STOP по пайпу; legacy: kill процесса).</summary>
+    private void StopBot(SessionModel session, string reason)
+    {
+        if (session.BotProcessId <= 0)
+        {
+            return;
+        }
+
+        if (UseAgent)
+        {
+            if (AgentClient.SendStop(session))
+            {
+                McbLog.Info("Agent", $"{session.AccountLogin}: агент получил STOP ({reason})");
+                return;
+            }
+        }
+
+        WowLauncher.KillProcess(session.BotProcessId);
+    }
+
     /// <summary>
     /// Pulse вызывается и из UI-таймера, и из группового запуска — сериализуем,
     /// чтобы два Pulse не мутировали и не сохраняли конфиг вперегонки.
@@ -71,14 +124,14 @@ public sealed class SessionManager
         lock (_pulseLock)
         {
             // Пока ждали лок, бот мог прицепиться другим пульсом — не дублируем.
-            if (WowLauncher.IsProcessAlive(session.BotProcessId, "CopilotBuddy"))
+            if (IsBotAlive(session))
             {
                 return session.BotProcessId;
             }
 
             session.BotLastAttachUtc = DateTime.UtcNow;
             _ = BotAttacher.AssignBridgePort(_store, session);
-            var botPid = BotAttacher.Attach(_store, session);
+            var botPid = AttachBot(session);
             if (botPid > 0)
             {
                 session.BotProcessId = botPid;
@@ -210,7 +263,7 @@ public sealed class SessionManager
                 if (session.State is SessionState.Running or SessionState.Launching
                     || (session.AutoAttach
                         && session.State is SessionState.Running or SessionState.Launching or SessionState.InGame or SessionState.Botting
-                        && !WowLauncher.IsProcessAlive(session.BotProcessId, "CopilotBuddy")))
+                        && !IsBotAlive(session)))
                 {
                     inWorld = WowLauncher.GetInWorldPids();
                     if (session.State is SessionState.Running or SessionState.Launching
@@ -227,11 +280,47 @@ public sealed class SessionManager
 
                 // Бот жив дольше 5 минут — серия неудач закрыта, backoff сбрасываем.
                 var sinceAttachSec = (DateTime.UtcNow - session.BotLastAttachUtc).TotalSeconds;
-                if (WowLauncher.IsProcessAlive(session.BotProcessId, "CopilotBuddy") && sinceAttachSec > 300)
+                if (IsBotAlive(session) && sinceAttachSec > 300)
                 {
                     if (session.AttachFailCount > 0)
                     {
                         session.AttachFailCount = 0;
+                    }
+                }
+
+                // Агент: статусы из первых рук (integration-cb-into-mcb.md §4).
+                // STATE-машина едет поверх netstat-детекта, который остаётся fallback.
+                if (UseAgent && session.BotProcessId > 0)
+                {
+                    var agentStatus = session.AgentStatus;
+                    if (agentStatus == "ERROR")
+                    {
+                        McbLog.Warn("Agent",
+                            $"{session.AccountLogin}: агент сообщил ERROR: {session.AgentDetail ?? "без деталей"} — глушу, перезапуск по backoff");
+                        StopBot(session, "agent ERROR");
+                        session.BotProcessId = 0;
+                    }
+                    else if (agentStatus == "BOT_STOPPED")
+                    {
+                        // Бот остановился сам (профиль кончился/стоп изнутри) —
+                        // агент глушим, следующий пульс поднимет нового.
+                        McbLog.Info("Agent", $"{session.AccountLogin}: бот остановился внутри агента — перезапуск");
+                        StopBot(session, "bot stopped");
+                        session.BotProcessId = 0;
+                    }
+                    else
+                    {
+                        var mapped = AgentClient.MapStatus(agentStatus);
+                        if (mapped is not null
+                            && session.State is SessionState.Running or SessionState.Launching
+                                or SessionState.InGame or SessionState.Botting
+                            && session.State != mapped)
+                        {
+                            McbLog.Info("Agent",
+                                $"{session.AccountLogin}: агент: {agentStatus} ({session.AgentDetail}) — состояние {mapped}");
+                            session.State = mapped.Value;
+                            session.LastUpdatedUtc = DateTime.UtcNow;
+                        }
                     }
                 }
 
@@ -252,7 +341,7 @@ public sealed class SessionManager
                     if (leaderSession is not null
                         && leaderSession.WowProcessId > 0
                         && WowLauncher.IsProcessAlive(leaderSession.WowProcessId, leaderSession.WowImageName)
-                        && (!WowLauncher.IsProcessAlive(leaderSession.BotProcessId, "CopilotBuddy")
+                        && (!IsBotAlive(leaderSession)
                             || (DateTime.UtcNow - leaderSession.BotLastAttachUtc).TotalSeconds < 10))
                     {
                         continue;
@@ -266,13 +355,13 @@ public sealed class SessionManager
                     && inWorld.Contains(session.WowProcessId)
                     && (DateTime.UtcNow - session.LastUpdatedUtc).TotalSeconds >= InWorldSettleSec
                     && (!GroupLaunchActive || session.Id == _groupCurrentSessionId)
-                    && !WowLauncher.IsProcessAlive(session.BotProcessId, "CopilotBuddy"))
+                    && !IsBotAlive(session))
                 {
                     if (session.BotProcessId > 0 && sinceAttachSec < 300)
                     {
                         session.AttachFailCount++;
                         McbLog.Warn("Attach",
-                            $"{session.AccountLogin}: CopilotBuddy (PID {session.BotProcessId}) продержался {sinceAttachSec:F0} с — " +
+                            $"{session.AccountLogin}: бот (PID {session.BotProcessId}) продержался {sinceAttachSec:F0} с — " +
                             $"неудача #{session.AttachFailCount} (клиент не в мире? бот не нашёл процесс?)");
                     }
 
@@ -281,7 +370,7 @@ public sealed class SessionManager
                     {
                         session.BotLastAttachUtc = DateTime.UtcNow;
                         _ = BotAttacher.AssignBridgePort(_store, session);
-                        var botPid = BotAttacher.Attach(_store, session);
+                        var botPid = AttachBot(session);
                         if (botPid > 0)
                         {
                             session.BotProcessId = botPid;
@@ -314,13 +403,14 @@ public sealed class SessionManager
             session.LastUpdatedUtc = DateTime.UtcNow;
 
             // Старый бот остался прицепленным к мёртвому клиенту — закрываем.
-            // CopilotBuddy выбирает процесс один раз при старте (/pid=) и не
-            // умеет переключаться на новый: живой бот-зомби блокировал аттач
-            // нового бота к перезапущенному клиенту (бой 2026-11-21).
-            if (WowLauncher.IsProcessAlive(session.BotProcessId, "CopilotBuddy"))
+            // Агент выходит сам (STOP + self-exit), legacy CopilotBuddy — kill.
+            // Бот выбирает процесс один раз при старте (/pid=) и не умеет
+            // переключаться на новый: живой бот-зомби блокировал аттач нового
+            // бота к перезапущенному клиенту (бой 2026-11-21).
+            if (IsBotAlive(session))
             {
                 var oldBotPid = session.BotProcessId;
-                WowLauncher.KillProcess(oldBotPid);
+                StopBot(session, "клиент мёртв");
                 McbLog.Info("Session", $"{session.AccountLogin}: старый бот (PID {oldBotPid}) закрыт вместе с клиентом — после рестарта запустится новый");
             }
             session.BotProcessId = 0;
@@ -565,9 +655,9 @@ public sealed class SessionManager
         return false;
     }
 
-    /// <summary>Бот сессии загружен: CopilotBuddy жив и продержался &gt; 10 с после аттача.</summary>
-    private static bool IsBotLoaded(SessionModel session)
-        => WowLauncher.IsProcessAlive(session.BotProcessId, "CopilotBuddy")
+    /// <summary>Бот сессии загружен: жив и продержался &gt; 10 с после аттача.</summary>
+    private bool IsBotLoaded(SessionModel session)
+        => IsBotAlive(session)
            && session.BotLastAttachUtc != DateTime.MinValue
            && (DateTime.UtcNow - session.BotLastAttachUtc).TotalSeconds > 10;
 
