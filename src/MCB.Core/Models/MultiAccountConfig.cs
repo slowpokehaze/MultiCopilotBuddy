@@ -32,6 +32,16 @@ public sealed class LaunchOptions
     public string CopilotBuddyExePath { get; set; } = string.Empty;
 
     /// <summary>
+    /// Этап B/C интеграции: ботить через MCB.Agent (headless-хост CopilotBuddy.dll
+    /// под Job Object менеджера, без UAC-спама и зомби). false = старый путь
+    /// BotAttacher → CopilotBuddy.exe (запасной до снятия с вооружения).
+    /// </summary>
+    public bool UseAgent { get; set; }
+
+    /// <summary>Путь к MCB.Agent.dll; пусто = рядом с CopilotBuddy.exe сессии (деплой build-agent.ps1).</summary>
+    public string AgentDllPath { get; set; } = string.Empty;
+
+    /// <summary>
     /// Этап 5: по копии бота на сессию (изоляция общих файлов — Logs, кэш
     /// компиляции плагинов). false = один и тот же exe на все сессии
     /// (статик-стейт бота изолирован процессами, Logs per-PID — этого обычно

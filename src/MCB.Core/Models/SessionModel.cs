@@ -49,8 +49,22 @@ public sealed class SessionModel
     /// <summary>Сколько раз подряд перезапускали безуспешно (сбрасывается при живом клиенте).</summary>
     public int RestartCount { get; set; }
 
-    /// <summary>PID процесса CopilotBuddy, приаттаченного к этой сессии (0 = бот не запущен).</summary>
+    /// <summary>PID процесса бота сессии: CopilotBuddy.exe (legacy) или хоста dotnet с MCB.Agent.dll (UseAgent).</summary>
     public int BotProcessId { get; set; }
+
+    // ---------- MCB.Agent (integration-cb-into-mcb.md, Этап C) ----------
+
+    /// <summary>Последний STATE-статус агента (ATTACHED/IN_WORLD/BOT_RUNNING/CLIENT_DEAD/ERROR).</summary>
+    public string? AgentStatus { get; set; }
+
+    /// <summary>Detail последнего STATE-статуса агента.</summary>
+    public string? AgentDetail { get; set; }
+
+    /// <summary>Момент последнего STATE-статуса агента (UTC).</summary>
+    public DateTime AgentStatusUtc { get; set; } = DateTime.MinValue;
+
+    /// <summary>Последняя строка зеркала лога бота (LOG) от агента.</summary>
+    public string? AgentLastLog { get; set; }
 
     /// <summary>
     /// Порт MCBBridge-плагина на этом клиенте (127.0.0.1) — быстрая смена
