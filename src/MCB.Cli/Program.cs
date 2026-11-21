@@ -1,3 +1,5 @@
+﻿using System.IO.Pipes;
+using System.Text;
 using System.Threading;
 
 using MCB.Core.Addon;
@@ -989,6 +991,18 @@ public static class Program
 
         Console.WriteLine($"MCB selftest, config: {configPath}");
 
+        // Самотест стирает и пересоздаёт конфиг — боевой файл по умолчанию
+        // не трогаем: без явного --config / MCB_CONFIG работаем во временном.
+        var exeDirSelf = AppContext.BaseDirectory;
+        var defaultConfig = MultiAccountStore.DefaultPath(
+            Path.GetFullPath(Path.Combine(exeDirSelf, @"..\..")));
+        if (string.Equals(Path.GetFullPath(configPath), Path.GetFullPath(defaultConfig),
+                StringComparison.OrdinalIgnoreCase))
+        {
+            configPath = Path.Combine(Path.GetTempPath(), "mcb-selftest-config.json");
+            Console.WriteLine($"Боевой конфиг не трогаем, самотест в: {configPath}");
+        }
+
         // 0. Чистый старт.
         if (File.Exists(configPath))
         {
@@ -1196,6 +1210,102 @@ public static class Program
         Check("Attach: нет бота → PID 0, повтор через 30 с", attachSession.BotProcessId == 0 && attachSession.BotLastAttachUtc != DateTime.MinValue);
         storeL.Config.Launch.CopilotBuddyExePath = string.Empty;
         attachSession.AutoAttach = false;
+
+        // 19a. MCB.Agent (integration-cb-into-mcb.md, Этапы B/C): аргументы и протокол.
+        var agentSession = new SessionModel
+        {
+            Id = "agentselftest01",
+            WowProcessId = 4242,
+            BotName = "Party Bot",
+            ProfilePath = @"C:\Games\bot\profiles\party.xml",
+            RoutineName = "Singular wotlk",
+            BridgePort = 47201,
+        };
+        var agentArgs = AgentLauncher.BuildArguments(agentSession, AgentLauncher.PipeName(agentSession), @"C:\Games\bot");
+        Check("Agent: pid+pipe+botdir", agentArgs.StartsWith("/pid=4242 --pipe=MCBAgent_agentselftest01 --botdir=\"C:\\Games\\bot\"", StringComparison.Ordinal));
+        Check("Agent: botname+profile+customclass+port",
+            agentArgs.Contains("/botname=\"Party Bot\"", StringComparison.Ordinal)
+            && agentArgs.Contains("/loadprofile=", StringComparison.Ordinal)
+            && agentArgs.EndsWith("/customclass=\"Singular wotlk\" --bridge-port=47201", StringComparison.Ordinal));
+        Check("Agent: маппинг STATE-машины",
+            AgentClient.MapStatus("BOT_RUNNING") == SessionState.Botting
+            && AgentClient.MapStatus("IN_WORLD") == SessionState.InGame
+            && AgentClient.MapStatus("ATTACHED") == SessionState.Running
+            && AgentClient.MapStatus("CLIENT_DEAD") == SessionState.Crashed
+            && AgentClient.MapStatus("BOT_STOPPED") == SessionState.InGame
+            && AgentClient.MapStatus("ERROR") is null
+            && AgentClient.MapStatus("мусор") is null);
+
+        // Мок-агент: пайп с STATE/LOG-строками, PING → PONG, STOP — фиксируем.
+        // Как реальный AgentPipeServer: accept-loop, несколько подключений подряд.
+        // Разрыв пайпа при dispose — норма (клиент ушёл): ловим и продолжаем.
+        {
+            var mockPipeName = AgentLauncher.PipeName(agentSession);
+            var stopReceived = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var mockThread = new Thread(() =>
+            {
+                while (!stopReceived.Task.IsCompleted)
+                {
+                    try
+                    {
+                        using var server = new System.IO.Pipes.NamedPipeServerStream(
+                            mockPipeName, System.IO.Pipes.PipeDirection.InOut, 1,
+                            System.IO.Pipes.PipeTransmissionMode.Byte, System.IO.Pipes.PipeOptions.Asynchronous);
+                        server.WaitForConnection();
+                        bool firstConnection = !stopReceived.Task.IsCompleted;
+                        // leaveOpen у обоих: dispose читателя не должен рвать
+                        // пайп под писателем (иначе ObjectDisposedException).
+                        using var writer = new StreamWriter(server, new UTF8Encoding(false)) { AutoFlush = true, NewLine = "\n" };
+                        using var reader = new StreamReader(server, Encoding.UTF8, false, 1024, leaveOpen: true);
+                        while (true)
+                        {
+                            // Строгий request-response: клиент первый пишет.
+                            var line = reader.ReadLine();
+                            if (line is null)
+                            {
+                                break; // клиент отвалился — ждём следующего
+                            }
+
+                            var command = line.Trim();
+                            if (command == "POLL" && firstConnection)
+                            {
+                                writer.WriteLine("{\"status\":\"IN_WORLD\",\"detail\":\"mock\"}");
+                                writer.WriteLine("{\"level\":\"normal\",\"msg\":\"mock log line\"}");
+                                firstConnection = false;
+                            }
+                            else if (command == "PING")
+                            {
+                                writer.WriteLine("PONG");
+                            }
+                            else if (command == "STOP")
+                            {
+                                stopReceived.TrySetResult(true);
+                                return;
+                            }
+                        }
+                    }
+                    catch
+                    {
+                        // Разрыв пайпа при dispose — норма (клиент ушёл): продолжаем accept-loop.
+                        Thread.Sleep(100);
+                    }
+                }
+            })
+            { IsBackground = true };
+            mockThread.Start();
+
+            Thread.Sleep(300); // мок успел подняться
+            var polled = AgentClient.Poll(agentSession, 1000);
+            Check("Agent: Poll вычитал STATE/LOG из пайпа",
+                polled && agentSession.AgentStatus == "IN_WORLD"
+                && agentSession.AgentDetail == "mock"
+                && agentSession.AgentLastLog == "mock log line"
+                && agentSession.AgentStatusUtc != DateTime.MinValue);
+            Check("Agent: PING → PONG", AgentClient.PingAlive(agentSession, 1000));
+            Check("Agent: STOP дошёл", AgentClient.SendStop(agentSession, 1000) && stopReceived.Task.Wait(2000));
+            Check("Agent: мёртвый пайп → Poll false",
+                !AgentClient.Poll(agentSession, 200) && !AgentClient.PingAlive(agentSession, 200));
+        }
 
         // ---------- Этап 2: мост MCBBridge ----------
 
